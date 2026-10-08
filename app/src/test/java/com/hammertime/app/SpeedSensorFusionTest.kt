@@ -54,4 +54,33 @@ class SpeedSensorFusionTest {
         fusion.onImuUpdate(9.80665f, 61_100_000_000L)
         assertTrue(fusion.fusedSpeedMph in 2.0..2.4)
     }
+
+    @Test
+    fun testFirstGpsFix_snapsInsteadOfBlending() {
+        // App starts mid-drive: no IMU history, GPS says 60 mph.
+        fusion.onGpsUpdate(60.0, 3f)
+        assertEquals(60.0, fusion.fusedSpeedMph, 0.001)
+
+        // Subsequent fixes blend (75% IMU / 25% GPS).
+        fusion.onGpsUpdate(64.0, 3f)
+        assertEquals(61.0, fusion.fusedSpeedMph, 0.001)
+    }
+
+    @Test
+    fun testGpsFixAfterImuGap_snapsToGps() {
+        fusion.onGpsUpdate(30.0, 3f)
+        fusion.onImuUpdate(0f, 1_000_000_000L)
+        // Stream paused for 30 s while the car sped up to 70 mph.
+        fusion.onImuUpdate(0f, 31_000_000_000L)
+        fusion.onGpsUpdate(70.0, 3f)
+        assertEquals(70.0, fusion.fusedSpeedMph, 0.001)
+    }
+
+    @Test
+    fun testPoorAccuracyFix_doesNotConsumeSnap() {
+        fusion.onGpsUpdate(50.0, 40f) // too inaccurate, ignored
+        assertEquals(0.0, fusion.fusedSpeedMph, 0.001)
+        fusion.onGpsUpdate(50.0, 5f)
+        assertEquals(50.0, fusion.fusedSpeedMph, 0.001)
+    }
 }

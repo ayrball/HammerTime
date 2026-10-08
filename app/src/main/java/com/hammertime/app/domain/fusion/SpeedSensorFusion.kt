@@ -13,6 +13,10 @@ class SpeedSensorFusion {
     // integrating the last acceleration across the gap would produce a bogus speed jump.
     private val MAX_IMU_GAP_SEC = 2.0
 
+    // True until the first good GPS fix, and again after an IMU gap or reset: the integrated
+    // speed can't be trusted there, so the next fix replaces it instead of being blended in.
+    private var snapToNextGps = true
+
     /**
      * Process IMU forward acceleration at high rate (50-100Hz)
      * @param longitudinalAccMps2 forward acceleration in m/s^2
@@ -25,6 +29,7 @@ class SpeedSensorFusion {
 
         val dtSec = (timestampNanos - lastImuTimestampNanos) / 1_000_000_000.0
         lastImuTimestampNanos = timestampNanos
+        if (dtSec > MAX_IMU_GAP_SEC) snapToNextGps = true
         if (dtSec <= 0.0 || dtSec > MAX_IMU_GAP_SEC) return fusedSpeedMph
 
         // Integrate acceleration: delta_v = a * dt
@@ -54,6 +59,12 @@ class SpeedSensorFusion {
             return 0.0
         }
 
+        if (snapToNextGps) {
+            snapToNextGps = false
+            fusedSpeedMph = gpsSpeedMph
+            return fusedSpeedMph
+        }
+
         // Complementary filter: GPS Doppler velocity provides absolute reference
         val alpha = 0.75
         fusedSpeedMph = alpha * fusedSpeedMph + (1.0 - alpha) * gpsSpeedMph
@@ -62,6 +73,7 @@ class SpeedSensorFusion {
 
     fun reset() {
         fusedSpeedMph = 0.0
+        snapToNextGps = true
         lastImuTimestampNanos = 0L
     }
 }
