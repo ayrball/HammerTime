@@ -97,4 +97,54 @@ class DragTimingEngineTest {
         assertNotNull("1/4 Mile split should be recorded", splitQuarter)
         assertTrue("Trap speed should be > 100 mph", (splitQuarter?.trapSpeedMph ?: 0.0) > 100.0)
     }
+
+    @Test
+    fun testFalseStart_bumpWithoutMotionAbortsRun() {
+        val t0 = 1_000_000_000L
+        engine.processFrame(0.0, 0f, t0)
+
+        // A bump spikes longitudinal G and launches the run...
+        var state = engine.processFrame(0.0, 0.5f, t0 + 100_000_000L)
+        assertEquals(DragRunStatus.LAUNCHED, state.status)
+
+        // ...but the car never moves. After the grace period the run is abandoned.
+        state = engine.processFrame(0.0, 0f, t0 + 1_000_000_000L)
+        assertEquals(DragRunStatus.LAUNCHED, state.status)
+        state = engine.processFrame(0.0, 0f, t0 + 2_500_000_000L)
+        assertEquals(DragRunStatus.WAITING_FOR_STOP, state.status)
+
+        // And it re-arms for the next run.
+        state = engine.processFrame(0.0, 0f, t0 + 2_600_000_000L)
+        assertEquals(DragRunStatus.ARMED_READY_FOR_LAUNCH, state.status)
+        assertEquals(0.0, state.activeRunSeconds, 0.001)
+    }
+
+    @Test
+    fun testSlowRollingStart_isNotAbortedWithinGracePeriod() {
+        val t0 = 1_000_000_000L
+        engine.processFrame(0.0, 0f, t0)
+        engine.processFrame(0.7, 0.35f, t0 + 100_000_000L)
+        // Still under 2 mph for 1s, then pulling away: must remain a live run.
+        var state = engine.processFrame(1.5, 0.3f, t0 + 1_100_000_000L)
+        assertEquals(DragRunStatus.LAUNCHED, state.status)
+        state = engine.processFrame(20.0, 0.5f, t0 + 2_000_000_000L)
+        assertEquals(DragRunStatus.LAUNCHED, state.status)
+    }
+
+    @Test
+    fun testFinishedRun_keepsSplitsUntilNextArm() {
+        val t0 = 1_000_000_000L
+        engine.processFrame(0.0, 0f, t0)
+        var time = t0 + 100_000_000L
+        var speed = 10.0
+        var state = engine.processFrame(speed, 0.5f, time)
+        while (state.status != DragRunStatus.FINISHED && speed < 140.0) {
+            speed = kotlin.math.min(130.0, speed + 4.0)
+            time += 500_000_000L
+            state = engine.processFrame(speed, 0.5f, time)
+        }
+        assertEquals(DragRunStatus.FINISHED, state.status)
+        assertNotNull(state.splits["1/4 Mile"])
+        assertNotNull(state.splits["0-60"])
+    }
 }

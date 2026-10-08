@@ -14,6 +14,13 @@ class DragTimingEngine {
     private var peakG: Float = 0f
 
     private val splits = mutableMapOf<String, DragSplitResult>()
+    private var splitsSnapshot: Map<String, DragSplitResult> = emptyMap()
+
+    private companion object {
+        const val FALSE_START_GRACE_SEC = 2.0
+        const val FALSE_START_SPEED_MPH = 2.0
+        const val MIN_DISTANCE_FOR_REARM_METERS = 50.0
+    }
 
     fun processFrame(
         speedMph: Double,
@@ -63,11 +70,15 @@ class DragTimingEngine {
 
                 if (splits.containsKey("1/4 Mile")) {
                     status = DragRunStatus.FINISHED
-                }
-
-                // If user slows down below 5 mph after launch, auto-rearm
-                if (speedMph < 2.0 && cumulativeDistanceMeters > 50.0) {
-                    status = DragRunStatus.WAITING_FOR_STOP
+                } else if (speedMph < FALSE_START_SPEED_MPH) {
+                    val elapsedSec = (timestampNanos - launchTimestampNanos) / 1_000_000_000.0
+                    if (cumulativeDistanceMeters > MIN_DISTANCE_FOR_REARM_METERS) {
+                        // Run was abandoned after moving: wait for the car to stop again.
+                        status = DragRunStatus.WAITING_FOR_STOP
+                    } else if (elapsedSec > FALSE_START_GRACE_SEC) {
+                        // Launch was triggered by a bump/G spike but the car never got going.
+                        status = DragRunStatus.WAITING_FOR_STOP
+                    }
                 }
             }
 
@@ -88,7 +99,7 @@ class DragTimingEngine {
             currentSpeedMph = speedMph,
             peakAccelG = peakG,
             activeRunSeconds = activeSeconds,
-            splits = splits.toMap()
+            splits = splitsSnapshot
         )
     }
 
@@ -111,6 +122,7 @@ class DragTimingEngine {
                 trapSpeedMph = targetMph,
                 isCompleted = true
             )
+            splitsSnapshot = splits.toMap()
         }
     }
 
@@ -136,6 +148,7 @@ class DragTimingEngine {
                 trapSpeedMph = trapSpeed,
                 isCompleted = true
             )
+            splitsSnapshot = splits.toMap()
         }
     }
 
@@ -146,6 +159,7 @@ class DragTimingEngine {
 
     private fun resetRun() {
         splits.clear()
+        splitsSnapshot = emptyMap()
         cumulativeDistanceMeters = 0.0
         launchTimestampNanos = 0L
         lastTimestampNanos = 0L

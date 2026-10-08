@@ -9,6 +9,10 @@ class SpeedSensorFusion {
     private var lastImuTimestampNanos: Long = 0L
     private val MS_TO_MPH = 2.23693629
 
+    // IMU samples further apart than this mean the stream was paused (e.g. app backgrounded);
+    // integrating the last acceleration across the gap would produce a bogus speed jump.
+    private val MAX_IMU_GAP_SEC = 2.0
+
     /**
      * Process IMU forward acceleration at high rate (50-100Hz)
      * @param longitudinalAccMps2 forward acceleration in m/s^2
@@ -21,6 +25,7 @@ class SpeedSensorFusion {
 
         val dtSec = (timestampNanos - lastImuTimestampNanos) / 1_000_000_000.0
         lastImuTimestampNanos = timestampNanos
+        if (dtSec <= 0.0 || dtSec > MAX_IMU_GAP_SEC) return fusedSpeedMph
 
         // Integrate acceleration: delta_v = a * dt
         val deltaSpeedMph = (longitudinalAccMps2 * dtSec) * MS_TO_MPH

@@ -42,4 +42,16 @@ class SpeedSensorFusionTest {
         // Filter should pull fused speed toward 20 mph
         assertTrue("Speed should adjust toward GPS Doppler reference", fusion.fusedSpeedMph < 25.0)
     }
+
+    @Test
+    fun testLargeImuGap_isNotIntegrated() {
+        fusion.onImuUpdate(0f, 1_000_000_000L)
+        // 60 s gap (stream paused) with a 1G sample must not add ~1300 mph.
+        fusion.onImuUpdate(9.80665f, 61_000_000_000L)
+        assertEquals(0.0, fusion.fusedSpeedMph, 0.001)
+
+        // Integration resumes normally afterwards.
+        fusion.onImuUpdate(9.80665f, 61_100_000_000L)
+        assertTrue(fusion.fusedSpeedMph in 2.0..2.4)
+    }
 }
