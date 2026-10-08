@@ -171,7 +171,7 @@ class MainActivity : ComponentActivity() {
                 .flowOn(Dispatchers.Default)
                 .collect { imu ->
                     val vehicleG = mountCalibrator.transformToVehicleG(
-                        imu.accelX, imu.accelY, imu.accelZ, isLandscape = true
+                        imu.accelX, imu.accelY, imu.accelZ
                     )
                     gForce = vehicleG
 
