@@ -3,10 +3,13 @@ package com.hammertime.app
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.SystemClock
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,7 +27,9 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.hammertime.app.data.camera.CameraVideoRecorder
 import com.hammertime.app.data.location.InternalGpsProvider
 import com.hammertime.app.data.sensor.ImuSensorProvider
@@ -43,7 +48,6 @@ import com.hammertime.app.ui.theme.HammerTimeTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
@@ -69,6 +73,16 @@ class MainActivity : ComponentActivity() {
     private var hasPermissions by mutableStateOf(false)
 
     private var previewView: PreviewView? = null
+    private var sensorsStarted = false
+
+    // Engines run on every sensor sample; Compose state and the sidecar are rate-limited.
+    private var lastUiPublishNanos = 0L
+    private var lastSidecarNanos = 0L
+
+    private companion object {
+        const val UI_PUBLISH_INTERVAL_NANOS = 33_000_000L
+        const val SIDECAR_INTERVAL_NANOS = 20_000_000L
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -115,10 +129,15 @@ class MainActivity : ComponentActivity() {
                         isRecording = isRecording,
                         onToggleRecording = { toggleRecording() },
                         onCalibrateMount = {
-                            mountCalibrator.calibrateWithGravityVector(imuProvider.currentGravityVector)
+                            if (!mountCalibrator.calibrateWithGravityVector(imuProvider.currentGravityVector)) {
+                                toast("Can't zero mount: hold the phone upright with the camera facing forward")
+                            }
                         },
                         onSetFinishGate = {
-                            latestGpsPoint?.let { trackEngine.setFinishGateAtCurrentLocation(it) }
+                            val gps = latestGpsPoint
+                            if (gps == null || !trackEngine.setFinishGateAtCurrentLocation(gps)) {
+                                toast("Set the gate while moving (3+ mph) with a GPS lock")
+                            }
                         },
                         onResetData = {
                             dragEngine.manualReset()
@@ -144,93 +163,122 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkAndRequestPermissions() {
-        val required = arrayOf(
-            Manifest.permission.CAMERA,
+        // Camera and fine location are required to run; audio is optional (video is silent without it).
+        val essential = arrayOf(Manifest.permission.CAMERA, Manifest.permission.ACCESS_FINE_LOCATION)
+        val all = essential + arrayOf(
             Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        val missing = required.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
+        fun granted(p: String) =
+            ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
-        if (missing.isEmpty()) {
+        if (essential.all(::granted)) {
             hasPermissions = true
             setupCameraAndSensors()
         } else {
-            permissionLauncher.launch(required)
+            permissionLauncher.launch(all)
         }
     }
 
     private fun setupCameraAndSensors() {
         previewView?.let { cameraRecorder.bindCamera(this, it) }
 
-        // Observe High-rate IMU (50-100Hz)
+        if (sensorsStarted) return
+        sensorsStarted = true
+
+        // Sensors only run while the activity is visible; collection restarts on resume.
         lifecycleScope.launch {
-            imuProvider.observeImu()
-                .flowOn(Dispatchers.Default)
-                .collect { imu ->
-                    val vehicleG = mountCalibrator.transformToVehicleG(
-                        imu.accelX, imu.accelY, imu.accelZ
-                    )
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { collectImu() }
+                launch { collectGps() }
+            }
+        }
+    }
+
+    /** High-rate IMU (50-500 Hz): integrate speed, feed the engines, log telemetry. */
+    private suspend fun collectImu() {
+        imuProvider.observeImu()
+            .flowOn(Dispatchers.Default)
+            .collect { imu ->
+                val vehicleG = mountCalibrator.transformToVehicleG(imu.accelX, imu.accelY, imu.accelZ)
+
+                val forwardAccMs2 = vehicleG.longitudinalG * 9.80665f
+                val currentSpeed = sensorFusion.onImuUpdate(forwardAccMs2, imu.timestampNanos)
+
+                val drag = if (currentMode == AppMode.DRAG) {
+                    dragEngine.processFrame(currentSpeed, vehicleG.longitudinalG, imu.timestampNanos)
+                } else null
+                val track = if (currentMode == AppMode.TRACK) {
+                    trackEngine.processFrame(latestGpsPoint, currentSpeed, vehicleG.lateralG, imu.timestampNanos)
+                } else null
+
+                if (imu.timestampNanos - lastUiPublishNanos >= UI_PUBLISH_INTERVAL_NANOS) {
+                    lastUiPublishNanos = imu.timestampNanos
                     gForce = vehicleG
-
-                    // Integrate acceleration into speed
-                    val forwardAccMs2 = vehicleG.longitudinalG * 9.80665f
-                    val currentSpeed = sensorFusion.onImuUpdate(forwardAccMs2, imu.timestampNanos)
                     speedMph = currentSpeed
+                    if (drag != null) dragState = drag
+                    if (track != null) trackState = track
+                }
 
-                    // Feed timing engines
-                    if (currentMode == AppMode.DRAG) {
-                        dragState = dragEngine.processFrame(currentSpeed, vehicleG.longitudinalG, imu.timestampNanos)
-                    } else {
-                        trackState = trackEngine.processFrame(latestGpsPoint, currentSpeed, vehicleG.lateralG, imu.timestampNanos)
-                    }
-
-                    // Write telemetry to sidecar file if recording
-                    if (isRecording) {
-                        val sidecarJson = String.format(
+                if (isRecording && imu.timestampNanos - lastSidecarNanos >= SIDECAR_INTERVAL_NANOS) {
+                    lastSidecarNanos = imu.timestampNanos
+                    cameraRecorder.logTelemetryPoint(
+                        String.format(
                             Locale.US,
                             "{\"t\":%d,\"spd\":%.2f,\"latG\":%.2f,\"longG\":%.2f}",
                             imu.timestampNanos, currentSpeed, vehicleG.lateralG, vehicleG.longitudinalG
                         )
-                        cameraRecorder.logTelemetryPoint(sidecarJson)
-                    }
+                    )
                 }
-        }
+            }
+    }
 
-        // Observe High-rate Internal GPS
-        lifecycleScope.launch {
-            gpsProvider.observeLocation()
-                .flowOn(Dispatchers.Default)
-                .collect { gps ->
-                    latestGpsPoint = gps
-                    satelliteCount = gpsProvider.satelliteCount
+    /** ~1-10 Hz GPS: correct IMU drift with Doppler speed and feed position to the engines. */
+    private suspend fun collectGps() {
+        gpsProvider.observeLocation()
+            .flowOn(Dispatchers.Default)
+            .collect { gps ->
+                latestGpsPoint = gps
+                satelliteCount = gpsProvider.satelliteCount
 
-                    // Correct speed drift with GPS Doppler velocity
-                    val correctedSpeed = sensorFusion.onGpsUpdate(gps.speedMph, gps.accuracyMeters)
-                    speedMph = correctedSpeed
+                val correctedSpeed = sensorFusion.onGpsUpdate(gps.speedMph, gps.accuracyMeters)
+                speedMph = correctedSpeed
 
-                    if (currentMode == AppMode.DRAG) {
-                        dragState = dragEngine.processFrame(correctedSpeed, gForce.longitudinalG, gps.timestampNanos)
-                    } else {
-                        trackState = trackEngine.processFrame(gps, correctedSpeed, gForce.lateralG, gps.timestampNanos)
-                    }
+                // Fixes are timestamped when measured, which lags delivery. Frame time must be "now"
+                // (same clock as the IMU) or the lap clock steps backwards at every fix.
+                val now = SystemClock.elapsedRealtimeNanos()
+                if (currentMode == AppMode.DRAG) {
+                    dragState = dragEngine.processFrame(correctedSpeed, gForce.longitudinalG, now)
+                } else {
+                    trackState = trackEngine.processFrame(gps, correctedSpeed, gForce.lateralG, now)
                 }
-        }
+            }
     }
 
     private fun toggleRecording() {
         if (isRecording) {
             cameraRecorder.stopRecording()
             isRecording = false
-        } else {
-            val mediaDir = externalMediaDirs.firstOrNull() ?: filesDir
-            cameraRecorder.startRecording(mediaDir) { event ->
-                // Handled in CameraVideoRecorder
+            return
+        }
+
+        val mediaDir = externalMediaDirs.firstOrNull() ?: filesDir
+        val started = cameraRecorder.startRecording(mediaDir) { event ->
+            if (event is VideoRecordEvent.Finalize) {
+                // Recording ended (stopped, camera unbound, storage full...): keep the UI honest.
+                isRecording = false
+                if (event.hasError()) toast("Recording stopped unexpectedly")
             }
+        }
+        if (started == null) {
+            toast("Camera isn't ready yet")
+        } else {
             isRecording = true
         }
+    }
+
+    private fun toast(message: String) {
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     override fun onDestroy() {
