@@ -17,7 +17,9 @@ data class GpsPoint(
     val speedMph: Double,
     val bearingDegrees: Float,
     val accuracyMeters: Float,
-    val timestampNanos: Long
+    val timestampNanos: Long,
+    /** False when the fix carried no bearing (e.g. stationary); [bearingDegrees] is then 0 and meaningless. */
+    val hasBearing: Boolean = true
 )
 
 data class RawImuSample(

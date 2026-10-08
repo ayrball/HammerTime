@@ -41,7 +41,8 @@ class InternalGpsProvider(private val context: Context) {
                     speedMph = speedMph,
                     bearingDegrees = if (loc.hasBearing()) loc.bearing else 0f,
                     accuracyMeters = loc.accuracy,
-                    timestampNanos = timeNanos
+                    timestampNanos = timeNanos,
+                    hasBearing = loc.hasBearing()
                 )
                 trySend(point)
             }
