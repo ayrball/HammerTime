@@ -2,6 +2,7 @@ package com.hammertime.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.WindowManager
@@ -11,18 +12,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Button
-import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -44,8 +38,10 @@ import com.hammertime.app.domain.model.TrackViewMode
 import com.hammertime.app.domain.model.VehicleGForce
 import com.hammertime.app.domain.track.TrackTimingEngine
 import com.hammertime.app.ui.screens.MainTelemetryScreen
+import com.hammertime.app.ui.screens.PermissionScreen
 import com.hammertime.app.ui.theme.HammerTimeTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -70,6 +66,8 @@ class MainActivity : ComponentActivity() {
     private var latestGpsPoint by mutableStateOf<GpsPoint?>(null)
     private var satelliteCount by mutableIntStateOf(0)
     private var isRecording by mutableStateOf(false)
+    private var recordingSeconds by mutableIntStateOf(0)
+    private var mountZeroed by mutableStateOf(false)
     private var hasPermissions by mutableStateOf(false)
 
     private var previewView: PreviewView? = null
@@ -101,6 +99,12 @@ class MainActivity : ComponentActivity() {
         // Keep screen on during driving & hide status bars for immersive dashcam HUD
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         WindowCompat.setDecorFitsSystemWindows(window, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            // Let the preview run under the camera cutout in landscape; the HUD insets itself.
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         WindowInsetsControllerCompat(window, window.decorView).apply {
             hide(WindowInsetsCompat.Type.systemBars())
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -127,9 +131,14 @@ class MainActivity : ComponentActivity() {
                         gpsPoint = latestGpsPoint,
                         satelliteCount = satelliteCount,
                         isRecording = isRecording,
+                        recordingSeconds = recordingSeconds,
+                        mountZeroed = mountZeroed,
                         onToggleRecording = { toggleRecording() },
                         onCalibrateMount = {
-                            if (!mountCalibrator.calibrateWithGravityVector(imuProvider.currentGravityVector)) {
+                            if (mountCalibrator.calibrateWithGravityVector(imuProvider.currentGravityVector)) {
+                                mountZeroed = true
+                                toast("Mount zeroed")
+                            } else {
                                 toast("Can't zero mount: hold the phone upright with the camera facing forward")
                             }
                         },
@@ -152,11 +161,7 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                 } else {
-                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Button(onClick = { checkAndRequestPermissions() }) {
-                            Text("Grant Camera & GPS Permissions")
-                        }
-                    }
+                    PermissionScreen(onGrant = { checkAndRequestPermissions() })
                 }
             }
         }
@@ -274,6 +279,18 @@ class MainActivity : ComponentActivity() {
             toast("Camera isn't ready yet")
         } else {
             isRecording = true
+            startRecordingTimer()
+        }
+    }
+
+    private fun startRecordingTimer() {
+        val startedAt = SystemClock.elapsedRealtime()
+        recordingSeconds = 0
+        lifecycleScope.launch {
+            while (isRecording) {
+                recordingSeconds = ((SystemClock.elapsedRealtime() - startedAt) / 1000).toInt()
+                delay(500)
+            }
         }
     }
 

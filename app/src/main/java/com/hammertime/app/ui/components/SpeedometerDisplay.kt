@@ -1,12 +1,13 @@
 package com.hammertime.app.ui.components
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -16,8 +17,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.hammertime.app.ui.theme.HudCardBg
 import com.hammertime.app.ui.theme.NeonYellow
+import com.hammertime.app.ui.theme.TextMuted
 import java.util.Locale
 
 @Composable
@@ -27,42 +28,47 @@ fun SpeedometerDisplay(
     longitudinalG: Float,
     modifier: Modifier = Modifier
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier
-            .background(HudCardBg, RoundedCornerShape(12.dp))
-            .padding(horizontal = 20.dp, vertical = 8.dp)
+    HudCard(
+        // Fixed minimum width so the card doesn't resize when the speed gains a digit.
+        modifier = modifier.widthIn(min = 230.dp),
+        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp)
     ) {
-        Row(verticalAlignment = Alignment.Bottom) {
+        Row(
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            verticalAlignment = Alignment.Bottom
+        ) {
             Text(
                 text = String.format(Locale.US, "%.0f", speedMph),
-                fontSize = 56.sp,
+                fontSize = 68.sp,
+                lineHeight = 72.sp,
                 fontWeight = FontWeight.Black,
                 fontFamily = FontFamily.Monospace,
                 color = Color.White
             )
-            Spacer(modifier = Modifier.width(6.dp))
+            Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = "MPH",
-                fontSize = 18.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.LightGray,
-                modifier = Modifier.padding(bottom = 10.dp)
+                color = TextMuted,
+                modifier = Modifier.padding(bottom = 12.dp)
             )
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
             Text(
                 text = String.format(Locale.US, "LAT %+.2fG", lateralG),
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = NeonYellow,
                 fontFamily = FontFamily.Monospace
             )
-            Spacer(modifier = Modifier.width(12.dp))
             Text(
                 text = String.format(Locale.US, "LONG %+.2fG", longitudinalG),
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 fontFamily = FontFamily.Monospace

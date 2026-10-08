@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,9 +22,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -32,7 +39,11 @@ import com.hammertime.app.domain.model.LapRecord
 import com.hammertime.app.domain.model.TrackState
 import com.hammertime.app.domain.model.VehicleGForce
 import com.hammertime.app.ui.components.GFrictionCircle
+import com.hammertime.app.ui.components.ResetConfirmDialog
+import com.hammertime.app.ui.components.hudSafePadding
+import com.hammertime.app.ui.format.formatLapTime
 import com.hammertime.app.ui.theme.DarkBackground
+import com.hammertime.app.ui.theme.DeepYellowBg
 import com.hammertime.app.ui.theme.DeepGreenBg
 import com.hammertime.app.ui.theme.DeepPurpleBg
 import com.hammertime.app.ui.theme.DeepRedBg
@@ -62,7 +73,7 @@ fun TrackDashboardScreen(
         modifier = modifier
             .fillMaxSize()
             .background(DarkBackground)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .hudSafePadding()
     ) {
         // 1. Top Predictive Delta Header Bar (Color-coded Purple / Green / Red with Extra Large Font)
         TopDeltaBanner(
@@ -208,9 +219,10 @@ private fun TopDeltaBanner(
             Spacer(modifier = Modifier.width(10.dp))
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(48.dp)
                     .background(if (isRecording) NeonRed else Color.DarkGray, CircleShape)
                     .border(2.dp, Color.White, CircleShape)
+                    .semantics { contentDescription = if (isRecording) "Stop recording" else "Start recording" }
                     .clickable { onToggleRecording() },
                 contentAlignment = Alignment.Center
             ) {
@@ -277,7 +289,9 @@ private fun LapTimingCard(
             // Giant Current Lap Timer (50sp bold monospace)
             Text(
                 text = formatLapTime(trackState.currentLapTimeSec),
-                fontSize = 50.sp,
+                fontSize = 46.sp,
+                maxLines = 1,
+                softWrap = false,
                 fontWeight = FontWeight.Black,
                 fontFamily = FontFamily.Monospace,
                 color = liveTimerColor
@@ -406,13 +420,13 @@ private fun CenterTelemetryCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF382E00), RoundedCornerShape(8.dp))
+                    .background(DeepYellowBg, RoundedCornerShape(8.dp))
                     .border(1.5.dp, NeonYellow, RoundedCornerShape(8.dp))
                     .padding(vertical = 5.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = String.format(Locale.US, "🟡 CORNER APEX: %.1f MPH", trackState.currentCornerApexMph),
+                    text = String.format(Locale.US, "CORNER APEX  %.1f MPH", trackState.currentCornerApexMph),
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Black,
                     fontFamily = FontFamily.Monospace,
@@ -433,6 +447,14 @@ private fun SessionStatsCard(
     onResetData: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var confirmReset by remember { mutableStateOf(false) }
+    if (confirmReset) {
+        ResetConfirmDialog(
+            onConfirm = { confirmReset = false; onResetData() },
+            onDismiss = { confirmReset = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .background(HudCardBg, RoundedCornerShape(12.dp))
@@ -493,7 +515,7 @@ private fun SessionStatsCard(
                 )
             } else {
                 val history = trackState.lapHistory
-                LazyColumn(modifier = Modifier.height(75.dp)) {
+                LazyColumn(modifier = Modifier.heightIn(max = 110.dp)) {
                     itemsIndexed(history.asReversed()) { index, lap ->
                         val originalIndex = history.size - 1 - index
                         val previousLapInHistory = if (originalIndex > 0) history[originalIndex - 1] else null
@@ -510,7 +532,7 @@ private fun SessionStatsCard(
         ) {
             SmallDashButton("SET GATE", NeonCyan, Modifier.weight(1f)) { onSetFinishGate() }
             SmallDashButton("ZERO", NeonYellow, Modifier.weight(0.8f)) { onCalibrateMount() }
-            SmallDashButton("RESET", Color.LightGray, Modifier.weight(0.8f)) { onResetData() }
+            SmallDashButton("RESET", Color.LightGray, Modifier.weight(0.8f)) { confirmReset = true }
         }
     }
 }
@@ -565,15 +587,10 @@ private fun SmallDashButton(text: String, tint: Color, modifier: Modifier = Modi
             .background(DarkBackground, RoundedCornerShape(6.dp))
             .border(1.dp, tint.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
             .clickable { onClick() }
+            .heightIn(min = 44.dp)
             .padding(vertical = 6.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(text = text, fontSize = 11.sp, fontWeight = FontWeight.Black, color = tint)
+        Text(text = text, fontSize = 12.sp, fontWeight = FontWeight.Black, color = tint)
     }
-}
-
-private fun formatLapTime(seconds: Double): String {
-    val mins = (seconds / 60).toInt()
-    val remSecs = seconds % 60
-    return String.format(Locale.US, "%02d:%05.2f", mins, remSecs)
 }

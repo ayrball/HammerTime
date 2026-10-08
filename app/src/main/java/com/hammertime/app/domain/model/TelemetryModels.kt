@@ -57,6 +57,8 @@ data class DragState(
     val currentSpeedMph: Double = 0.0,
     val peakAccelG: Float = 0f,
     val activeRunSeconds: Double = 0.0,
+    /** Distance covered since launch; 0 until a run starts. */
+    val distanceMeters: Double = 0.0,
     val splits: Map<String, DragSplitResult> = emptyMap()
 )
 

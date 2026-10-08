@@ -37,6 +37,12 @@ android {
     buildFeatures {
         compose = true
     }
+    testOptions {
+        unitTests {
+            // Robolectric needs merged resources/manifest for the Compose screenshot tests.
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 dependencies {
@@ -63,6 +69,10 @@ dependencies {
 
     // Testing
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.ui.test.junit4)
 
     debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
 }

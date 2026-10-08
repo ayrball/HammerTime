@@ -99,6 +99,7 @@ class DragTimingEngine {
             currentSpeedMph = speedMph,
             peakAccelG = peakG,
             activeRunSeconds = activeSeconds,
+            distanceMeters = cumulativeDistanceMeters,
             splits = splitsSnapshot
         )
     }

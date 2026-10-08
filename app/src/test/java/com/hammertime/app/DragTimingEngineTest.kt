@@ -2,6 +2,7 @@ package com.hammertime.app
 
 import com.hammertime.app.domain.drag.DragTimingEngine
 import com.hammertime.app.domain.model.DragRunStatus
+import com.hammertime.app.ui.hud.displayedRunSeconds
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -146,5 +147,41 @@ class DragTimingEngineTest {
         assertEquals(DragRunStatus.FINISHED, state.status)
         assertNotNull(state.splits["1/4 Mile"])
         assertNotNull(state.splits["0-60"])
+    }
+
+    @Test
+    fun testRunDistance_reportedWhileLaunched_andResetOnRearm() {
+        val t0 = 1_000_000_000L
+        engine.processFrame(0.0, 0f, t0)
+        engine.processFrame(10.0, 0.5f, t0 + 100_000_000L)
+
+        // Speed ramps 10 -> 22.3694 mph over 1 s: average 16.18 mph = 7.235 m/s, so 7.235 m.
+        val state = engine.processFrame(22.3694, 0.5f, t0 + 1_100_000_000L)
+        assertEquals(7.235, state.distanceMeters, 0.01)
+
+        engine.manualReset()
+        val rearmed = engine.processFrame(0.0, 0f, t0 + 5_000_000_000L)
+        assertEquals(0.0, rearmed.distanceMeters, 0.001)
+    }
+
+    @Test
+    fun testDisplayedRunSeconds_holdsQuarterMileEtAfterFinish() {
+        val t0 = 1_000_000_000L
+        engine.processFrame(0.0, 0f, t0)
+        var time = t0 + 100_000_000L
+        var speed = 10.0
+        var state = engine.processFrame(speed, 0.5f, time)
+        var live = 0.0
+        while (state.status != DragRunStatus.FINISHED && speed < 140.0) {
+            speed = kotlin.math.min(130.0, speed + 4.0)
+            time += 500_000_000L
+            state = engine.processFrame(speed, 0.5f, time)
+            if (state.status == DragRunStatus.LAUNCHED) live = state.displayedRunSeconds()
+        }
+
+        assertEquals(DragRunStatus.FINISHED, state.status)
+        assertEquals("engine reports 0 once finished", 0.0, state.activeRunSeconds, 0.0)
+        assertEquals(state.splits["1/4 Mile"]!!.elapsedSeconds, state.displayedRunSeconds(), 1e-9)
+        assertTrue("final ET should be at least the last live reading", state.displayedRunSeconds() >= live)
     }
 }
